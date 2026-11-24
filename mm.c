@@ -24,11 +24,11 @@
  ********************************************************/
 team_t team = {
     /* Team name */
-    "TJU",
+    "NPOPM",
     /* First member's full name */
-    "Student",
+    "NPOPM",
     /* First member's email address */
-    "student@tju.edu.cn",
+    "npopmrs@gmail.com",
     /* Second member's full name (leave blank if none) */
     "",
     /* Second member's email address (leave blank if none) */
@@ -94,17 +94,3 @@ void *mm_realloc(void *ptr, size_t size)
     mm_free(oldptr);
     return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
