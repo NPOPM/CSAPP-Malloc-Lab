@@ -8,7 +8,7 @@ GITFLAGS = -q --no-verify --allow-empty
 
 OBJS = mdriver.o mm.o memlib.o fsecs.o fcyc.o clock.o ftimer.o
 
-all: mdriver submit commit
+all: mdriver
 
 mdriver: $(OBJS)
 	$(CC) $(CFLAGS) -o mdriver $(OBJS)
