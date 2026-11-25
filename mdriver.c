@@ -930,7 +930,7 @@ static void printresults(int n, stats_t *stats)
 	   "trace", " valid", "util", "ops", "secs", "Kops");
     for (i=0; i < n; i++) {
 	if (stats[i].valid) {
-	    printf("%2d%10s%5.0f%%%8.0f%10.6f%6.0f\n", 
+	    printf("%2d%10s%5.0f%%%8.0f%10.6f %6.0f\n", 
 		   i,
 		   "yes",
 		   stats[i].util*100.0,
@@ -954,7 +954,7 @@ static void printresults(int n, stats_t *stats)
 
     /* Print the aggregate results for the set of traces */
     if (errors == 0) {
-	printf("%12s%5.0f%%%8.0f%10.6f%6.0f\n", 
+	printf("%12s%5.0f%%%8.0f%10.6f %6.0f\n", 
 	       "Total       ",
 	       (util/n)*100.0,
 	       ops, 
