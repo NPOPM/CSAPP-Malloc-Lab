@@ -81,7 +81,7 @@ team_t team = { /* Team name */
 #define ALIGNMENT 8
 #define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~((size_t)ALIGNMENT - 1))
 
-// ===宏定义=== (implicit free list)
+// ===宏定义===
 // 基本常量
 #define WSIZE 4   // 字大小，也即头尾大小
 #define DSIZE 8   // 双字大小，也即对齐单位
