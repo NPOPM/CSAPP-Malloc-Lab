@@ -1,0 +1,22 @@
+{
+  // ---- 保存时自动格式化 ----
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+
+  // C/C++ 交给 ms-vscode.cpptools，它内部会读仓库根目录的 .clang-format
+  "[c]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  "[cpp]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  "C_Cpp.formatting": "clangFormat",
+  "C_Cpp.clang_format_style": "file",
+  "C_Cpp.clang_format_fallbackStyle": "LLVM",
+
+  // 与 .editorconfig 同样的收尾规则，即使没装 EditorConfig 扩展也生效
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true
+}

@@ -1,0 +1,73 @@
+# ============================================================
+# 与 https://gitee.com/npopm/data-structure 的排版习惯对齐
+# 基调：LLVM + tab 缩进(4) + K&R 大括号 + 指针靠左 + 100 列
+# 说明：.c 文件同样套用这一节（clang-format 把 C 视作 Cpp 风格）
+# ============================================================
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# ---- 缩进 ----
+IndentWidth: 4
+TabWidth: 4
+UseTab: ForIndentation          # 行首用 tab，对齐处补空格
+
+# ---- 大括号：全部跟在行尾，只有 catch 换行 ----
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: true             # } 和 catch 分两行
+  BeforeElse: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+
+# ---- 指针 / 引用靠左 ----
+PointerAlignment: Left          # Node* next_;  const T& value
+DerivePointerAlignment: false
+
+# ---- 行宽 ----
+ColumnLimit: 100
+
+# ---- 对齐 ----
+AccessModifierOffset: -4        # private: / public: 与 class 顶格
+AlignConsecutiveDeclarations: true
+AlignTrailingComments: true
+SpacesBeforeTrailingComments: 1
+AlignOperands: AlignAfterOperator
+BreakBeforeBinaryOperators: NonAssignment
+AlignAfterOpenBracket: DontAlign
+AlignEscapedNewlines: Right
+
+# ---- 短语句一律展开 ----
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: Never
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# ---- 模板 ----
+SpaceAfterTemplateKeyword: false   # template<typename T>
+BreakTemplateDeclarations: Yes
+
+# ---- 空行 ----
+EmptyLineAfterAccessModifier: Leave
+MaxEmptyLinesToKeep: 1
+
+# ---- 其他 ----
+IndentCaseLabels: false
+SortIncludes: false             # include 顺序手排，不自动重排
+ReflowComments: true
+
+# C 的初始化列表按块处理：避免 { 后粘连注释、} 粘连最后一个元素
+Cpp11BracedListStyle: false

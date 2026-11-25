@@ -1,0 +1,35 @@
+# 编辑器统一配置（VS Code / CLion / Vim 都会读）
+# 与本机 data-structure 仓库保持一致：tab 缩进 4、LF、UTF-8、去行尾空格
+# 唯一差别：C 源码用 UTF-8 不带 BOM（这个仓库在 Linux/gcc 下编译，
+#           不需要给 VS2022 留 BOM，带 BOM 反而可能干扰评测平台的工具链）
+
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8
+indent_style = tab
+indent_size = 4
+tab_width = 4
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{c,h}]
+indent_style = tab
+indent_size = 4
+tab_width = 4
+
+[Makefile]
+indent_style = tab
+
+[*.{md,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[.gitignore]
+indent_style = space
+indent_size = 2
+
+[.gitattributes]
+indent_style = space
+indent_size = 2
