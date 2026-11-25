@@ -39,9 +39,10 @@
  *   采用显式空闲链表：所有空闲块通过 payload 前 8 字节的 prev/next 组成一条双向链表，
  *   free_listp 指向表头，已分配块不参与遍历，因此 find_fit 跳过了堆中的大部分块。
  *
- *   本版采用 LIFO 头插：插入与摘除都是 O(1)，不需要遍历链表。
- *
- *   find_fit 从表头开始，按首次适配返回第一个足够大的空闲块；不满足就沿 next 继续。
+ *   链表按地址升序维护：insert_free 从表头开始找到第一个地址更大的节点，插在它前面。
+ *   这样 find_fit 的放置顺序与隐式链表版本完全一致（总是优先使用低地址的空闲块），
+ *   堆的生长方式也随之一致—— realloc 更倾向于在堆尾就地扩展，而不是把数据搬到别处。
+ *   插入的代价是 O(空闲块数) 的遍历，但立即合并可以保证链表始终很短。
  *
  * 合并策略：
  *   立即合并。coalesce 的约定是“传入的块此刻不在空闲链表中”：它把被吞并的前/后
@@ -170,21 +171,34 @@ int mm_init(void) {
 
 /*
  * @brief 将 block_ptr 指向的空闲块插入空闲链表。
- * 显式空闲链表被组织为 LIFO，所以将新的空闲块头插进入链表。
+ * 显式空闲链表采用地址有序插入，需要从空闲链表的开头进行一次遍历，找到合适的插入位置。
  *
  * @param block_ptr 要插入空闲块的 payload 指针。
  */
 static void insert_free(void* block_ptr) {
-	// 新空闲块的 prev 指针设为 NULL，next 指针设为插入前的表头
-	PREV_FREEP(block_ptr) = NULL;
-	NEXT_FREEP(block_ptr) = free_listp;
-	// 旧表头的 prev 指针设为指向插入的空闲块
-	if (free_listp != NULL) {
-		PREV_FREEP(free_listp) = block_ptr;
+	void* cur = free_listp;
+	void* prev = NULL;
+
+	// 找到第一个地址大于 block_ptr 的结点，把当前的空闲块插在它前面
+	while (cur != NULL && cur < block_ptr) {
+		// 两个指针前进
+		prev = cur;
+		cur = NEXT_FREEP(cur);
 	}
 
-	// 更新表头指针
-	free_listp = block_ptr;
+	// 将新空闲块插入指定位置
+	PREV_FREEP(block_ptr) = prev;
+	NEXT_FREEP(block_ptr) = cur;
+	// 检测 cur 是否是表头的块
+	if (prev != NULL) { // 如果 cur 不是表头
+		NEXT_FREEP(prev) = block_ptr;
+	} else { // 如果 cur 是表头
+		free_listp = block_ptr;
+	}
+	// 检测 cur 是否是表尾的块
+	if (cur != NULL) {
+		PREV_FREEP(cur) = block_ptr;
+	}
 
 #ifdef DEBUG
 	st_fl_len++;
