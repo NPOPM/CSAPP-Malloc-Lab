@@ -67,6 +67,17 @@
 #include "mm.h"
 #include "memlib.h"
 
+/* ================= 调试期统计（-DDEBUG 时编译启用） ================= */
+#ifdef DEBUG
+static size_t st_malloc_calls, st_free_calls, st_realloc_calls;
+static size_t st_r_shrink, st_r_absorb, st_r_tail, st_r_move;
+static size_t st_move_bytes;
+static size_t st_extend_calls, st_extend_bytes, st_peak_heap;
+static size_t st_fl_len, st_fl_max, st_fl_sum, st_fl_samples;
+#endif /* DEBUG */
+
+int mm_check(void); /* 堆一致性检查器，定义在文件末尾 */
+
 team_t team = { /* Team name */
 	"NPOPM",
 	/* First member's full name */
@@ -174,6 +185,15 @@ static void insert_free(void* block_ptr) {
 
 	// 更新表头指针
 	free_listp = block_ptr;
+
+#ifdef DEBUG
+	st_fl_len++;
+	if (st_fl_len > st_fl_max) {
+		st_fl_max = st_fl_len;
+	}
+	st_fl_sum += st_fl_len;
+	st_fl_samples++;
+#endif /* DEBUG */
 }
 
 /*
@@ -181,6 +201,10 @@ static void insert_free(void* block_ptr) {
  * @param block_ptr 要删除的空闲块的 payload 指针。
  */
 static void remove_free(void* block_ptr) {
+#ifdef DEBUG
+	st_fl_len--;
+#endif /* DEBUG */
+
 	// 判断 block_ptr 指向的是不是表头
 	if (PREV_FREEP(block_ptr) == NULL) {
 		free_listp = NEXT_FREEP(block_ptr);
@@ -254,6 +278,14 @@ static void* extend_heap(size_t size) {
 	if ((block_ptr = mem_sbrk(size)) == (void*)-1) {
 		return NULL;
 	}
+
+#ifdef DEBUG
+	st_extend_calls++;
+	st_extend_bytes += size;
+	if (mem_heapsize() > st_peak_heap) {
+		st_peak_heap = mem_heapsize();
+	}
+#endif /* DEBUG */
 
 	// 将分配出的新内存组织为一个空闲块
 	PUT(HP(block_ptr), PACK(size, 0));
@@ -335,6 +367,10 @@ void* mm_malloc(size_t size) {
 	}
 	alloc_size = BLKSIZE(size);
 
+#ifdef DEBUG
+	st_malloc_calls++;
+#endif /* DEBUG */
+
 	// 适配空闲块
 	if ((block_ptr = find_fit(alloc_size)) != NULL) {
 		place(block_ptr, alloc_size);
@@ -346,6 +382,11 @@ void* mm_malloc(size_t size) {
 		return NULL;
 	}
 	place(block_ptr, alloc_size);
+#ifdef DEBUG_CHECK
+	if (!mm_check()) {
+		printf("mm_check failed: mm_malloc(%zu) -> %p\n", size, block_ptr);
+	}
+#endif /* DEBUG_CHECK */
 	return block_ptr;
 }
 
@@ -362,6 +403,10 @@ void mm_free(void* ptr) {
 	}
 
 	// 将块的 alloc 置为 0
+#ifdef DEBUG
+	st_free_calls++;
+#endif /* DEBUG */
+
 	size = GET_SIZE(HP(ptr));
 	PUT(HP(ptr), PACK(size, 0));
 	PUT(FP(ptr), PACK(size, 0));
@@ -371,6 +416,12 @@ void mm_free(void* ptr) {
 
 	// 将合并后的空闲块插入空闲链表
 	insert_free(merged);
+
+#ifdef DEBUG_CHECK
+	if (!mm_check()) {
+		printf("mm_check failed: mm_free(%p)\n", ptr);
+	}
+#endif /* DEBUG_CHECK */
 }
 
 /*
@@ -397,8 +448,15 @@ void* mm_realloc(void* ptr, size_t size) {
 	alloc_size = BLKSIZE(size);
 	old_size = GET_SIZE(HP(ptr));
 
+#ifdef DEBUG
+	st_realloc_calls++;
+#endif /* DEBUG */
+
 	// 1.如果新块比旧块小（或相等），原地缩容并执行切分
 	if (alloc_size <= old_size) {
+#ifdef DEBUG
+		st_r_shrink++;
+#endif /* DEBUG */
 		// 仅当剩余空间大小能装下一个最小块时执行切分
 		if (old_size - alloc_size >= MIN_BS) {
 			// 按照 alloc_size 缩容
@@ -420,6 +478,9 @@ void* mm_realloc(void* ptr, size_t size) {
 	// 2.后面的块空闲且合并后空间足够，原地扩展
 	next_size = GET_SIZE(HP(NEXT_BLKP(ptr)));
 	if (!GET_ALLOC(HP(NEXT_BLKP(ptr))) && old_size + next_size >= alloc_size) {
+#ifdef DEBUG
+		st_r_absorb++;
+#endif /* DEBUG */
 		// 将旧的下一块从空闲链表删除
 		new_ptr = NEXT_BLKP(ptr);
 		remove_free(new_ptr);
@@ -445,6 +506,9 @@ void* mm_realloc(void* ptr, size_t size) {
 
 	// 3.后面是 epilogue，即 ptr 是堆尾块，直接扩展堆
 	if (GET_SIZE(HP(NEXT_BLKP(ptr))) == 0) {
+#ifdef DEBUG
+		st_r_tail++;
+#endif /* DEBUG */
 		size_t need = alloc_size - old_size;
 		char*  new_block;
 
@@ -462,6 +526,10 @@ void* mm_realloc(void* ptr, size_t size) {
 	}
 
 	// 4.块在堆中间且执行可能的合并后仍然不够，分配新内存并将原来的 payload 复制过来
+#ifdef DEBUG
+	st_r_move++;
+	st_move_bytes += old_size - DSIZE;
+#endif /* DEBUG */
 	new_ptr = mm_malloc(size);
 	if (new_ptr == NULL) {
 		return NULL;
@@ -471,3 +539,137 @@ void* mm_realloc(void* ptr, size_t size) {
 
 	return new_ptr;
 }
+
+/*
+ * @brief 堆一致性检查器
+ *
+ * 逐块遍历堆、再遍历空闲链表，检查：
+ *   1. 每个块都完整落在堆内，大小合法且为 DSIZE 的倍数；
+ *   2. header 与 footer 的大小和 ALLOC 位完全一致；
+ *   3. 不存在相邻的两个空闲块（立即合并的不变量）；
+ *   4. 空闲链表中的节点都在堆内、都是空闲块、payload 足以放下两个指针；
+ *   5. 链表的 prev/next 双向对称，且长度与堆中空闲块数量一致；
+ *   6. 堆中每个空闲块都能在链表中找到。
+ *
+ * @return 1 表示堆一致；0 表示发现错误（已打印出错位置与原因）
+ */
+int mm_check(void) {
+	char*  bp;
+	void*  p;
+	size_t heap_free = 0;
+	size_t list_len = 0;
+	int    prev_free = 0;
+
+	/* 1. 逐块遍历堆（从第一个真实块开始，heap_listp 指向的是 prologue 的 footer） */
+	for (bp = NEXT_BLKP(heap_listp); GET_SIZE(HP(bp)) != 0; bp = NEXT_BLKP(bp)) {
+		size_t size = GET_SIZE(HP(bp));
+		size_t alloc = GET_ALLOC(HP(bp));
+
+		if ((char*)bp < (char*)mem_heap_lo()
+		    || (char*)bp + size - WSIZE > (char*)mem_heap_hi() + 1) {
+			printf("mm_check: 块 %p 超出堆边界\n", (void*)bp);
+			return 0;
+		}
+		if (size < MIN_BS || size % DSIZE != 0) {
+			printf("mm_check: 块 %p 大小非法 (%zu)\n", (void*)bp, size);
+			return 0;
+		}
+		if (GET(HP(bp)) != GET(FP(bp))) {
+			printf("mm_check: 块 %p 的 header 与 footer 不一致\n", (void*)bp);
+			return 0;
+		}
+		if (!alloc && prev_free) {
+			printf("mm_check: %p 与前一块都是空闲块，没有合并\n", (void*)bp);
+			return 0;
+		}
+		prev_free = !alloc;
+		if (!alloc) {
+			heap_free++;
+		}
+	}
+
+	/* 2. 遍历空闲链表 */
+	for (p = free_listp; p != NULL; p = NEXT_FREEP(p)) {
+		list_len++;
+		if ((char*)p < (char*)mem_heap_lo() || (char*)p > (char*)mem_heap_hi()) {
+			printf("mm_check: 链表节点 %p 不在堆内\n", p);
+			return 0;
+		}
+		if (GET_ALLOC(HP(p))) {
+			printf("mm_check: 链表中的 %p 是已分配块\n", p);
+			return 0;
+		}
+		if (GET_SIZE(HP(p)) < MIN_BS) {
+			printf("mm_check: 链表中的 %p 放不下两个指针\n", p);
+			return 0;
+		}
+		if (NEXT_FREEP(p) != NULL && PREV_FREEP(NEXT_FREEP(p)) != p) {
+			printf("mm_check: %p 与后继的 prev 指针不对称\n", p);
+			return 0;
+		}
+		if (list_len > 1000000) {
+			printf("mm_check: 空闲链表疑似成环\n");
+			return 0;
+		}
+	}
+
+	/* 3. 堆中每个空闲块都必须出现在链表里 */
+	for (bp = NEXT_BLKP(heap_listp); GET_SIZE(HP(bp)) != 0; bp = NEXT_BLKP(bp)) {
+		int found = 0;
+
+		if (GET_ALLOC(HP(bp))) {
+			continue;
+		}
+		for (p = free_listp; p != NULL; p = NEXT_FREEP(p)) {
+			if (p == (void*)bp) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found) {
+			printf("mm_check: 空闲块 %p 不在空闲链表中\n", (void*)bp);
+			return 0;
+		}
+	}
+
+	if (list_len != heap_free) {
+		printf("mm_check: 链表长度 %zu 与堆中空闲块数 %zu 不符\n", list_len, heap_free);
+		return 0;
+	}
+
+	return 1;
+}
+
+#ifdef DEBUG
+/*
+ * @brief 程序退出时打印统计信息（-DDEBUG 时启用）
+ * @note  mdriver 不调用 mem_deinit，因此退出时堆内存仍然有效，可以安全遍历
+ */
+__attribute__((destructor)) static void mm_report(void) {
+	size_t blocks = 0, free_blocks = 0, free_bytes = 0;
+	char*  bp;
+
+	for (bp = NEXT_BLKP(heap_listp); GET_SIZE(HP(bp)) != 0; bp = NEXT_BLKP(bp)) {
+		blocks++;
+		if (!GET_ALLOC(HP(bp))) {
+			free_blocks++;
+			free_bytes += GET_SIZE(HP(bp));
+		}
+	}
+
+	printf("\n=============== mm 调试统计 ===============\n");
+	printf("malloc 调用    : %zu\n", st_malloc_calls);
+	printf("free   调用    : %zu\n", st_free_calls);
+	printf("realloc 调用   : %zu\n", st_realloc_calls);
+	printf("  |- 原地缩容  : %zu\n", st_r_shrink);
+	printf("  |- 吞并后块  : %zu\n", st_r_absorb);
+	printf("  |- 堆尾扩展  : %zu\n", st_r_tail);
+	printf("  `- 搬运数据  : %zu 次，共 %zu 字节\n", st_r_move, st_move_bytes);
+	printf("extend_heap    : %zu 次，共 %zu 字节\n", st_extend_calls, st_extend_bytes);
+	printf("峰值堆大小     : %zu 字节\n", st_peak_heap);
+	printf("空闲链表长度   : 当前 %zu / 最大 %zu / 平均 %.1f\n", st_fl_len, st_fl_max,
+	    st_fl_samples ? (double)st_fl_sum / (double)st_fl_samples : 0.0);
+	printf("堆内块数       : %zu（空闲 %zu，空闲字节 %zu）\n", blocks, free_blocks, free_bytes);
+	printf("===========================================\n");
+}
+#endif /* DEBUG */

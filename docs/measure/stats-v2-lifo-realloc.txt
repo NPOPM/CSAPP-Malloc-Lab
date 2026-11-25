@@ -1,0 +1,24 @@
+Team Name:NPOPM
+Member 1 :NPOPM:npopmrs@gmail.com
+Measuring performance with gettimeofday().
+
+Results for mm malloc:
+trace  valid  util     ops      secs  Kops
+ 0       yes   33%   14401  0.013460   1070
+Total          33%   14401  0.013460   1070
+
+Perf index = 20 (util) + 40 (thru) = 60/100
+
+=============== mm 调试统计 ===============
+malloc 调用    : 92172
+free   调用    : 92172
+realloc 调用   : 57588
+  |- 原地缩容  : 0
+  |- 吞并后块  : 23028
+  |- 堆尾扩展  : 0
+  `- 搬运数据  : 34560 次，共 2040914944 字节
+extend_heap    : 240 次，共 22390368 字节
+峰值堆大小     : 1865880 字节
+空闲链表长度   : 当前 12 / 最大 14 / 平均 7.4
+堆内块数       : 1（空闲 1，空闲字节 1865864）
+===========================================
