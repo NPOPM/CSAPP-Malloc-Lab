@@ -1,13 +1,13 @@
 /*
- * mm.c - 隐式空闲链表实现的动态内存分配器（V1）
+ * mm.c - 显式空闲链表实现的动态内存分配器（V2）
  *
- * 块格式（在本实现中，字长 4 字节，双字 8 字节）：
+ * 块格式（-m32 下字长 4 字节，双字 8 字节）：
  *
  *   已分配块                                空闲块
- *   +--------+------------------+--------+  +--------+------------------+--------+
- *   | header | payload          | footer |  | header | (空闲，未使用)    | footer |
- *   +--------+------------------+--------+  +--------+------------------+--------+
- *    4 字节   8n 字节（n >= 1）   4 字节      4 字节                       4 字节
+ *   +--------+------------------+--------+  +--------+--------------------+--------+
+ *   | header | payload          | footer |  | header | prev | next | ...  | footer |
+ *   +--------+------------------+--------+  +--------+--------------------+--------+
+ *    4 字节   8n 字节（n >= 1）   4 字节      4 字节   4 字节  4 字节        4 字节
  *
  *   header/footer 均为 4 字节的字，低 3 位是标志位，其余位存放整块大小：
  *     bit 0 = ALLOC，当前块是否已分配（footer 中同步存放）
@@ -36,24 +36,26 @@
  *              同时挡住向后合并越过堆尾
  *
  * 空闲链表组织：
- *   采用隐式空闲链表
- *   通过 header 中的 size 跳到下一块、通过 footer 回到上一块。
- *   find_fit 从 heap_listp 起步，按首次适配（first fit）返回第一个足够大的
- *   空闲块；命中后若剩余部分仍能构成一个最小块（>= MIN_BS），则将它切出
- *   作为新的空闲块，否则整块分配出去。
+ *   采用显式空闲链表：所有空闲块通过 payload 前 8 字节的 prev/next 组成一条双向链表，
+ *   free_listp 指向表头，已分配块不参与遍历，因此 find_fit 跳过了堆中的大部分块。
+ *
+ *   本版采用 LIFO 头插：插入与摘除都是 O(1)，不需要遍历链表。
+ *
+ *   find_fit 从表头开始，按首次适配返回第一个足够大的空闲块；不满足就沿 next 继续。
  *
  * 合并策略：
- *   立即合并。mm_free 释放块后，根据前后邻居的 ALLOC 位分四种情形处理：
- *   不合并、与后块合并、与前块合并、与两侧同时合并。extend_heap 在堆尾
- *   造出新块后同样调用合并逻辑，以吃掉堆尾可能残留的空闲块。
+ *   立即合并。coalesce 的约定是“传入的块此刻不在空闲链表中”：它把被吞并的前/后
+ *   空闲块从链表中摘除并返回合并后的块首，入链由调用者负责（mm_free、extend_heap
+ *   以及 realloc 的缩容分支）。这样四种合并情形与链表维护只有一份实现。
  *
  * 堆扩展：
  *   首次适配失败时按 max(请求大小, CHUNKSIZE) 扩展堆。mem_sbrk 返回的地址
  *   正好落在旧 epilogue 上，因此第一块与后续每块的扩展走同一条代码路径。
+ *   CHUNKSIZE 必须是 DSIZE 的倍数；扩展出的块不小于 MIN_BS，否则放不下两个链表指针。
  *
  * realloc 策略（尽量避免搬运数据）：
- *   新请求更小或相等  -> 原地缩容，切出的尾巴并入空闲链表并尝试合并
- *   后一块空闲且够用  -> 原地吞并后块扩展
+ *   新请求更小或相等  -> 原地缩容，切出的尾巴合并后入链
+ *   后一块空闲且够用  -> 先从链表摘下后块，再原地吞并扩展
  *   当前块位于堆尾    -> 直接扩展堆尾并并入
  *   以上都不满足      -> 分配新块、memcpy、释放旧块
  */
@@ -107,6 +109,14 @@ team_t team = { /* Team name */
 // 全局堆指针
 static char* heap_listp;
 
+// ===显式空闲链表===
+// 空闲链表指针，只对空闲块使用
+#define PREV_FREEP(block_ptr) (*(void**)(block_ptr))
+#define NEXT_FREEP(block_ptr) (*(void**)((char*)(block_ptr) + WSIZE))
+
+// 空闲链表头
+static char* free_listp;
+
 /*
  * @brief 初始化堆内存。
  * 堆内存的初始结构：
@@ -118,9 +128,9 @@ static char* heap_listp;
  *                      ↑
  *                heap_listp (base + 8)
  * padding：修正对齐，使后续块的 payload 8 对齐。
- * prologue：相当于隐式空闲链表的“头结点”。
- * 	   heap_listp 指向 prologue 的 footer，这样可以使得遍历从跳转到第一个块开始。
- * epilogue：标志着隐式空闲链表的结尾。
+ * prologue：相当于堆的“头结点”。
+ * 	   heap_listp 指向 prologue 的 footer，遍历的第一步即为跳转到第一个有负载的已分配块。
+ * epilogue：标志着堆的结尾。
  * 	   size == 0 是遍历的终止条件，alloc == 1 保证它在合并时被看作是已分配的。
  *
  * @return 0	成功初始化。
@@ -141,11 +151,54 @@ int mm_init(void) {
 	// 遍历起点指向 base + 8
 	heap_listp += 2 * WSIZE;
 
+	// 初始化空闲链表头
+	free_listp = NULL;
+
 	return 0;
 }
 
 /*
+ * @brief 将 block_ptr 指向的空闲块插入空闲链表。
+ * 显式空闲链表被组织为 LIFO，所以将新的空闲块头插进入链表。
+ *
+ * @param block_ptr 要插入空闲块的 payload 指针。
+ */
+static void insert_free(void* block_ptr) {
+	// 新空闲块的 prev 指针设为 NULL，next 指针设为插入前的表头
+	PREV_FREEP(block_ptr) = NULL;
+	NEXT_FREEP(block_ptr) = free_listp;
+	// 旧表头的 prev 指针设为指向插入的空闲块
+	if (free_listp != NULL) {
+		PREV_FREEP(free_listp) = block_ptr;
+	}
+
+	// 更新表头指针
+	free_listp = block_ptr;
+}
+
+/*
+ * @brief 将 block_ptr 指向的空闲块从空闲链表中删除。
+ * @param block_ptr 要删除的空闲块的 payload 指针。
+ */
+static void remove_free(void* block_ptr) {
+	// 判断 block_ptr 指向的是不是表头
+	if (PREV_FREEP(block_ptr) == NULL) {
+		free_listp = NEXT_FREEP(block_ptr);
+	} else {
+		NEXT_FREEP(PREV_FREEP(block_ptr)) = NEXT_FREEP(block_ptr);
+	}
+
+	// 判断 block_ptr 指向的是不是表尾
+	if (NEXT_FREEP(block_ptr) != NULL) {
+		PREV_FREEP(NEXT_FREEP(block_ptr)) = PREV_FREEP(block_ptr);
+	}
+}
+
+/*
  * @brief 将 block_ptr 指向的空闲块与前后的空闲块合并。
+ * 调用者需要保证 block_ptr 指向的块不在空闲链表中。
+ * coalesce 只负责将被吞并的邻居从空闲链表中删除，合并后的块插入由调用者负责。
+ *
  * @param block_ptr	指向空闲块 payload 的指针。
  * @return void* 合并后的块的 payload 指针。
  */
@@ -162,25 +215,29 @@ static void* coalesce(void* block_ptr) {
 	else if (prev_alloc && !next_alloc) {
 		// 计算合并后新块的大小
 		block_size += GET_SIZE(HP(NEXT_BLKP(block_ptr)));
-		// 修改新块的头尾
-		PUT(HP(block_ptr), PACK(block_size, 0));
-		PUT(FP(block_ptr), PACK(block_size, 0));
+
+		// 从空闲链表中删除被吞并的后一块
+		remove_free(NEXT_BLKP(block_ptr));
 	}
 	// 3.与前一块合并
 	else if (!prev_alloc && next_alloc) {
 		block_size += GET_SIZE(HP(PREV_BLKP(block_ptr)));
-		PUT(HP(PREV_BLKP(block_ptr)), PACK(block_size, 0));
-		PUT(FP(block_ptr), PACK(block_size, 0));
+
+		// 从空闲链表中删除被吞并的前一块
+		remove_free(PREV_BLKP(block_ptr));
+
 		block_ptr = PREV_BLKP(block_ptr);
 	}
 	// 4.与两侧合并
 	else {
 		block_size += GET_SIZE(HP(PREV_BLKP(block_ptr))) + GET_SIZE(HP(NEXT_BLKP(block_ptr)));
-		PUT(HP(PREV_BLKP(block_ptr)), PACK(block_size, 0));
-		PUT(FP(NEXT_BLKP(block_ptr)), PACK(block_size, 0));
+		remove_free(PREV_BLKP(block_ptr));
+		remove_free(NEXT_BLKP(block_ptr));
 		block_ptr = PREV_BLKP(block_ptr);
 	}
 
+	PUT(HP(block_ptr), PACK(block_size, 0));
+	PUT(FP(block_ptr), PACK(block_size, 0));
 	return block_ptr;
 }
 
@@ -203,13 +260,15 @@ static void* extend_heap(size_t size) {
 	PUT(FP(block_ptr), PACK(size, 0));
 	PUT(HP(NEXT_BLKP(block_ptr)), PACK(0, 1)); // 新的 epilogue 头部
 
-	// 合并新块与原来尾部的空闲块，并返回合并后的块指针
-	return coalesce(block_ptr);
+	// 合并新块与原来尾部的空闲块，将合并后的块插入空闲链表，并返回合并后的块指针
+	block_ptr = coalesce(block_ptr);
+	insert_free(block_ptr);
+	return block_ptr;
 }
 
 /*
  * @brief 为指定的 size 适配空闲块。
- * 选择的策略为首次适配，即从堆头开始匹配到的第一个足够大的空闲块。
+ * 选择的策略为首次适配，即从空闲链表头开始匹配到的第一个足够大的空闲块。
  *
  * @param size 需要的整块的大小。
  * 调用者传入的 size 应该保证已计入块的头尾大小，且是 DSIZE 的倍数。
@@ -217,10 +276,10 @@ static void* extend_heap(size_t size) {
  * @return void* 匹配到的空闲块的 payload 指针。返回 NULL 表示发生错误。
  */
 static void* find_fit(size_t size) {
-	// 遍历起点为 heap_listp；终止条件为 size == 0
+	// 遍历起点为 free_listp；终止条件为 block_ptr == NULL
 	void* block_ptr;
-	for (block_ptr = heap_listp; GET_SIZE(HP(block_ptr)) != 0; block_ptr = NEXT_BLKP(block_ptr)) {
-		if (!GET_ALLOC(HP(block_ptr)) && GET_SIZE(HP(block_ptr)) >= size) {
+	for (block_ptr = free_listp; block_ptr != NULL; block_ptr = NEXT_FREEP(block_ptr)) {
+		if (GET_SIZE(HP(block_ptr)) >= size) {
 			return block_ptr;
 		}
 	}
@@ -230,13 +289,16 @@ static void* find_fit(size_t size) {
 /*
  * @brief 把空闲块 block_ptr 按照需求的大小 size 切分。
  * 当切分的剩余部分大小不足一个最小块的大小时，没有必要进行切分，此时的切分会严重拖慢首次适配的时间。
- * *此外，在 64 位系统上，8 字节的空间不能构成一个合法的块，因为头尾各是 8 字节。
  *
  * @param block_ptr 空闲块的 payload 指针。
  * @param size 需要的整块的大小。
  */
 static void place(void* block_ptr, size_t size) {
 	size_t total_size = GET_SIZE(HP(block_ptr)); // 空闲块的总大小
+
+	// 将空闲块从空闲链表中删除
+	remove_free(block_ptr);
+
 	// 仅当剩余部分的大小大于最小块大小时，进行切分
 	if ((total_size - size) >= MIN_BS) {
 		// 构造当前分配的块
@@ -246,6 +308,9 @@ static void place(void* block_ptr, size_t size) {
 		block_ptr = NEXT_BLKP(block_ptr);
 		PUT(HP(block_ptr), PACK(total_size - size, 0));
 		PUT(FP(block_ptr), PACK(total_size - size, 0));
+
+		// 将构造出的空闲块插入空闲链表
+		insert_free(block_ptr);
 	}
 	// 剩余空间不足以放下最小块，不进行拆分
 	else {
@@ -290,6 +355,7 @@ void* mm_malloc(size_t size) {
  */
 void mm_free(void* ptr) {
 	size_t size;
+	void*  merged;
 
 	if (ptr == NULL) {
 		return;
@@ -301,7 +367,10 @@ void mm_free(void* ptr) {
 	PUT(FP(ptr), PACK(size, 0));
 
 	// 立即合并
-	coalesce(ptr);
+	merged = coalesce(ptr);
+
+	// 将合并后的空闲块插入空闲链表
+	insert_free(merged);
 }
 
 /*
@@ -313,7 +382,7 @@ void mm_free(void* ptr) {
  */
 void* mm_realloc(void* ptr, size_t size) {
 	void*  new_ptr;
-	size_t alloc_size, old_size /* 旧块的 payload 大小 */, next_size, merged;
+	size_t alloc_size, old_size, next_size, merged;
 
 	// 当 ptr == NULL 时，mm_realloc 的行为与 mm_malloc 一致
 	if (ptr == NULL) {
@@ -341,8 +410,9 @@ void* mm_realloc(void* ptr, size_t size) {
 			PUT(HP(new_ptr), PACK(old_size - alloc_size, 0));
 			PUT(FP(new_ptr), PACK(old_size - alloc_size, 0));
 
-			// 与后方潜在的空闲块合并
-			coalesce(new_ptr);
+			// 与后方潜在的空闲块合并，并插入空闲链表
+			new_ptr = coalesce(new_ptr);
+			insert_free(new_ptr);
 		}
 		return ptr;
 	}
@@ -350,6 +420,10 @@ void* mm_realloc(void* ptr, size_t size) {
 	// 2.后面的块空闲且合并后空间足够，原地扩展
 	next_size = GET_SIZE(HP(NEXT_BLKP(ptr)));
 	if (!GET_ALLOC(HP(NEXT_BLKP(ptr))) && old_size + next_size >= alloc_size) {
+		// 将旧的下一块从空闲链表删除
+		new_ptr = NEXT_BLKP(ptr);
+		remove_free(new_ptr);
+
 		merged = old_size + next_size;
 
 		if (merged - alloc_size >= MIN_BS) {
@@ -359,6 +433,9 @@ void* mm_realloc(void* ptr, size_t size) {
 			new_ptr = NEXT_BLKP(ptr);
 			PUT(HP(new_ptr), PACK(merged - alloc_size, 0));
 			PUT(FP(new_ptr), PACK(merged - alloc_size, 0));
+
+			// 将切出的空闲块插入空闲链表
+			insert_free(new_ptr);
 		} else {
 			PUT(HP(ptr), PACK(merged, 1));
 			PUT(FP(ptr), PACK(merged, 1));
@@ -368,11 +445,19 @@ void* mm_realloc(void* ptr, size_t size) {
 
 	// 3.后面是 epilogue，即 ptr 是堆尾块，直接扩展堆
 	if (GET_SIZE(HP(NEXT_BLKP(ptr))) == 0) {
-		if (extend_heap(alloc_size - old_size) == NULL) {
+		size_t need = alloc_size - old_size;
+		char*  new_block;
+
+		// 与隐式空闲链表不同，这里必须要求堆扩展的空间大于等于最小块大小
+		if ((new_block = extend_heap(need >= MIN_BS ? need : MIN_BS)) == NULL) {
 			return NULL;
 		}
-		PUT(HP(ptr), PACK(alloc_size, 1));
-		PUT(FP(ptr), PACK(alloc_size, 1));
+		remove_free(new_block);
+
+		// 如果多出 8 字节，吞并以避免产生非法的小块
+		need = GET_SIZE(HP(new_block));
+		PUT(HP(ptr), PACK(old_size + need, 1));
+		PUT(FP(ptr), PACK(old_size + need, 1));
 		return ptr;
 	}
 
