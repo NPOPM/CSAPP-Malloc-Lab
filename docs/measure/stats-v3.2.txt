@@ -1,0 +1,59 @@
+Team Name:NPOPM
+Member 1 :NPOPM:npopmrs@gmail.com
+Using default tracefiles in ./traces/
+Measuring performance with gettimeofday().
+
+Testing mm malloc
+Reading tracefile: amptjp-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: cccp-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: cp-decl-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: expr-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: coalescing-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: random-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: random2-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: binary-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: binary2-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: realloc-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: realloc2-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+
+Results for mm malloc:
+trace  valid  util     ops      secs  Kops
+ 0       yes   99%    5694  0.000118  48173
+ 1       yes   99%    5848  0.000110  53164
+ 2       yes   99%    6648  0.000128  51978
+ 3       yes  100%    5380  0.000112  48079
+ 4       yes   98%   14400  0.000183  78646
+ 5       yes   96%    4800  0.000340  14130
+ 6       yes   95%    4800  0.000314  15311
+ 7       yes   97%   12000  0.005089   2358
+ 8       yes   90%   24000  0.017045   1408
+ 9       yes   99%   14401  0.000155  92730
+10       yes  100%   14401  0.000079 181373
+Total          98%  112372  0.023672   4747
+
+Perf index = 59 (util) + 40 (thru) = 99/100
+
+=============== mm 调试统计 ===============
+malloc 调用    : 616644
+free   调用    : 616656
+realloc 调用   : 115176
+  |- 原地缩容  : 39588
+  |- 吞并后块  : 0
+  |- 堆尾扩展  : 75576
+  `- 搬运数据  : 12 次，共 6144 字节
+extend_heap    : 276396 次，共 532161120 字节
+峰值堆大小     : 16320688 字节
+链表总长       : 当前 132 / 最大 4105 / 平均 405.0
+堆内块数       : 1（空闲 1，空闲字节 28168）
+===========================================
