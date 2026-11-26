@@ -1,0 +1,45 @@
+Team Name:NPOPM
+Member 1 :NPOPM:npopmrs@gmail.com
+Using default tracefiles in ./traces/
+Measuring performance with gettimeofday().
+
+Testing mm malloc
+Reading tracefile: amptjp-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: cccp-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: cp-decl-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: expr-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: coalescing-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: random-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: random2-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: binary-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: binary2-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: realloc-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+Reading tracefile: realloc2-bal.rep
+Checking mm_malloc for correctness, efficiency, and performance.
+
+Results for mm malloc:
+trace  valid  util     ops      secs  Kops
+ 0       yes   98%    5694  0.000154  37094
+ 1       yes   99%    5848  0.000122  47974
+ 2       yes   99%    6648  0.000149  44617
+ 3       yes   99%    5380  0.000112  47907
+ 4       yes   99%   14400  0.000156  92545
+ 5       yes   91%    4800  0.000257  18663
+ 6       yes   90%    4800  0.000248  19339
+ 7       yes   97%   12000  0.002959   4056
+ 8       yes   90%   24000  0.009905   2423
+ 9       yes  100%   14401  0.000134 107550
+10       yes   71%   14401  0.000153  94309
+Total          94%  112372  0.014348   7832
+
+Perf index = 56 (util) + 40 (thru) = 96/100
