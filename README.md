@@ -1,3 +1,5 @@
+> 本仓库的实现说明见 [IMPLEMENTATION.md](IMPLEMENTATION.md)。
+
 # malloc实验
 
 ## 实验目的
