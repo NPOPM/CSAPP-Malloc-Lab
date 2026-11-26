@@ -1,3 +1,6 @@
 *.o
 mdriver
 *.zip
+
+# 报告截图用的干净快照，不参与提交
+snapshots/
